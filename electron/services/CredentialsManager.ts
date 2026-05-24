@@ -116,7 +116,11 @@ export class CredentialsManager {
     }
 
     public getSttProvider(): 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' {
-        const provider = this.credentials.sttProvider || 'none';
+        // Japanese-interview-assistant fork (ADR-001): default to local-whisper.
+        // The whole product is designed around offline Japanese transcription via
+        // Whisper Large v3 Turbo, so a fresh install should land there without a
+        // settings-UI detour. Users who want a cloud STT just pick one in Settings.
+        const provider = this.credentials.sttProvider || 'local-whisper';
         // Self-heal: if provider is 'none' but a Natively key exists, the user is in a
         // broken state (key cleared then re-entered via a path that skipped auto-promote,
         // or credentials restored from backup). Silently restore to 'natively' so STT works.
@@ -178,7 +182,11 @@ export class CredentialsManager {
     }
 
     public getSttLanguage(): string {
-        return this.credentials.sttLanguage || 'english-us';
+        // Japanese-interview-assistant fork (ADR-001): default to ja-JP so
+        // LocalWhisperSTT's whisperWorker LANG_MAP resolves to 'japanese' and
+        // Whisper's multilingual decoder is forced into Japanese mode on the
+        // very first segment (no auto-detect warm-up cost).
+        return this.credentials.sttLanguage || 'ja-JP';
     }
 
     public getAiResponseLanguage(): string {

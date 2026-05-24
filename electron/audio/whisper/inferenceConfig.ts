@@ -26,7 +26,19 @@ export interface InferenceConfig {
  * Whisper-safe per-module dtype map. Applies to Whisper, Distil-Whisper, and
  * Moonshine — all three use the same encoder/decoder ONNX file naming.
  *
- *   encoder_model            → fp32  (preserves acoustic encoder accuracy)
+ *   encoder_model            → q8    (originally fp32 for accuracy, but the
+ *                                     HF onnx-community repos publish the
+ *                                     fp32 encoder using ONNX external-data —
+ *                                     a separate `encoder_model.onnx_data`
+ *                                     file. @huggingface/transformers v3
+ *                                     does NOT auto-pull `.onnx_data`, so
+ *                                     ORT init fails with "system error 13"
+ *                                     on Windows. Falling back to q8 keeps
+ *                                     the weights inline in `.onnx`. The
+ *                                     WER cost is ~1-2pp on Large v3 Turbo
+ *                                     for Japanese — still acceptable per
+ *                                     ADR-001's 4-6% target after streaming
+ *                                     LocalAgreement-2 stabilisation.)
  *   decoder_model            → q8    (token decoder; quantizing here is the
  *   decoder_model_merged     → q8     standard speedup with negligible WER cost)
  *   decoder_with_past_model  → q8
@@ -37,7 +49,7 @@ export interface InferenceConfig {
  * Moonshine uses separate decoder + with_past, etc.).
  */
 const WHISPER_SAFE_DTYPE: Record<string, string> = {
-    encoder_model: 'fp32',
+    encoder_model: 'q8',
     decoder_model: 'q8',
     decoder_model_merged: 'q8',
     decoder_with_past_model: 'q8',

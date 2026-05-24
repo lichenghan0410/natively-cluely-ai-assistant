@@ -346,7 +346,7 @@ export class AppState {
           const { isModelCached } = require('./audio/whisper/modelManager');
           const { modelPreloader } = require('./audio/whisper/modelPreloader');
           const { resolveInferenceConfig } = require('./audio/whisper/inferenceConfig');
-          const modelId = settingsManager.get('localWhisperModel') ?? 'Xenova/whisper-tiny.en';
+          const modelId = settingsManager.get('localWhisperModel') ?? 'Xenova/whisper-medium';
           const { dtype } = resolveInferenceConfig();
           if (isModelCached(modelId, dtype)) {
             console.log(`[AppState] Preloading local Whisper model: ${modelId}`);
@@ -1054,7 +1054,12 @@ export class AppState {
     } else if (sttProvider === 'local-whisper') {
       const { LocalWhisperSTT } = require('./audio/LocalWhisperSTT');
       const sm = SettingsManager.getInstance();
-      const globalModel = sm.get('localWhisperModel') ?? 'Xenova/whisper-tiny.en';
+      // Japanese-interview-assistant fork (ADR-002 C'): default to the
+      // multilingual Whisper Medium checkpoint for the short-term Windows
+      // bring-up. Large v3 still OOMs inside the V8 worker while loading ONNX
+      // buffers, so Medium is the smallest surgical change that can verify the
+      // capture -> STT -> UI path before any larger whisper.cpp pivot.
+      const globalModel = sm.get('localWhisperModel') ?? 'Xenova/whisper-medium';
       // Per-channel override: when enabled the two STT instances may load
       // different models (e.g. Moonshine Tiny for mic, Moonshine Base for
       // system audio). Falls back to globalModel if the per-channel slot is

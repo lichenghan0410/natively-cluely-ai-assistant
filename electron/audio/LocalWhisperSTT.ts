@@ -34,6 +34,7 @@
 import { EventEmitter } from 'events';
 import { Worker } from 'worker_threads';
 import path from 'path';
+import fs from 'fs';
 import { resampleToF32 } from './whisper/audioResampler';
 import { VadProcessor } from './whisper/vadProcessor';
 import { filterHallucination } from './whisper/hallucinationFilter';
@@ -558,8 +559,35 @@ export class LocalWhisperSTT extends EventEmitter {
             this.flushPending();
         } else {
             console.log(`[LocalWhisperSTT] Cold-starting worker for ${this.modelId}`);
-            const workerPath = path.join(__dirname, 'whisper', 'whisperWorker.js');
-            this.worker = new Worker(workerPath);
+            // esbuild's bundle:true config inlines this module into main.js, so
+            // __dirname can be either `dist-electron/electron/audio/` (when this
+            // file is loaded as a standalone module) or `dist-electron/electron/`
+            // (when inlined into the main.js bundle). Probe both to stay robust
+            // across build modes — ADR-001 Phase 1 Step 2 hit this in dev.
+            const candidates = [
+                path.join(__dirname, 'whisper', 'whisperWorker.js'),
+                path.join(__dirname, 'audio', 'whisper', 'whisperWorker.js'),
+            ];
+            const workerPath = candidates.find(p => fs.existsSync(p));
+            if (!workerPath) {
+                throw new Error(
+                    `whisperWorker.js not found. Tried: ${candidates.join(', ')}`
+                );
+            }
+            // Whisper Large v3 weights are ~1.5 GB (615 MB encoder + 873 MB
+            // decoder, q8 quantised). transformers.js reads each ONNX into a
+            // V8 ArrayBuffer before handing it to ORT, so a stock worker
+            // (default ~1.5 GB old-space cap) hits `v8::ArrayBuffer::New
+            // Allocation failed - process out of memory` mid-load. Bump the
+            // heap to 8 GB — covers Large v3 load + peak decode allocations
+            // with headroom; users on lower-RAM machines that picked a
+            // smaller model in Settings still won't allocate more than they
+            // need (V8 grows the heap lazily up to this cap).
+            this.worker = new Worker(workerPath, {
+                resourceLimits: {
+                    maxOldGenerationSizeMb: 8192,
+                },
+            });
             this.attachWorkerListeners();
             this.worker.postMessage(buildWorkerInitMessage(this.modelId));
         }

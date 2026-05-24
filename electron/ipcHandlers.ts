@@ -2168,7 +2168,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       const { isModelCached } = require('./audio/whisper/modelManager');
       const { resolveInferenceConfig } = require('./audio/whisper/inferenceConfig');
       const { SettingsManager } = require('./services/SettingsManager');
-      const id = modelId || SettingsManager.getInstance().get('localWhisperModel') || 'Xenova/whisper-tiny.en';
+      const id = modelId || SettingsManager.getInstance().get('localWhisperModel') || 'Xenova/whisper-medium';
       // Pass active dtype so the cache check verifies the SPECIFIC ONNX
       // files (e.g. encoder_model.onnx for fp32) are present — not just
       // "directory non-empty". Otherwise a v2-cached _quantized.onnx-only
