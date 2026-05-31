@@ -2071,10 +2071,31 @@ export function initializeIpcHandlers(appState: AppState): void {
       const { getAvailableModels } = require('./audio/whisper/modelManager');
       const models = getAvailableModels();
       const activeModelId = SettingsManager.getInstance().get('localWhisperModel') ?? '';
-      return { models, activeModelId };
+      const sttBackend = SettingsManager.getInstance().get('sttBackend') ?? 'whispercpp';
+      const whisperCppModel = SettingsManager.getInstance().get('whisperCppModel') ?? 'large-v3-turbo-q5_0';
+      return { models, activeModelId, sttBackend, whisperCppModel };
     } catch (e: any) {
       console.error('[IPC] local-whisper-get-models error:', e.message);
-      return { models: [], activeModelId: '' };
+      return { models: [], activeModelId: '', sttBackend: 'whispercpp', whisperCppModel: 'large-v3-turbo-q5_0' };
+    }
+  });
+
+  safeHandle("local-whisper-get-backend-config", async () => {
+    const sm = SettingsManager.getInstance();
+    return {
+      sttBackend: sm.get('sttBackend') ?? 'whispercpp',
+      whisperCppModel: sm.get('whisperCppModel') ?? 'large-v3-turbo-q5_0',
+    };
+  });
+
+  safeHandle("local-whisper-set-backend-config", async (_, cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => {
+    try {
+      const sm = SettingsManager.getInstance();
+      if (cfg?.sttBackend === 'whispercpp' || cfg?.sttBackend === 'medium') sm.set('sttBackend', cfg.sttBackend);
+      if (cfg?.whisperCppModel === 'large-v3-turbo-q5_0' || cfg?.whisperCppModel === 'medium-q5_0') sm.set('whisperCppModel', cfg.whisperCppModel);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
     }
   });
 
@@ -2128,6 +2149,23 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
     activeWhisperDownloads.add(modelId);
     try {
+      if (modelId === 'whispercpp-runtime' || modelId === 'large-v3-turbo-q5_0' || modelId === 'medium-q5_0') {
+        const { downloadWhisperCppTarget } = require('./audio/whisper/whisperCppDownloader');
+        const sender = event.sender;
+        downloadWhisperCppTarget(modelId, ({ progress }: any) => {
+          if (!sender.isDestroyed()) {
+            sender.send('local-whisper-download-progress', { modelId, progress });
+          }
+        }).then(() => {
+          activeWhisperDownloads.delete(modelId);
+          if (!sender.isDestroyed()) sender.send('local-whisper-download-complete', { modelId });
+        }).catch((err: Error) => {
+          activeWhisperDownloads.delete(modelId);
+          if (!sender.isDestroyed()) sender.send('local-whisper-download-error', { modelId, error: err.message });
+        });
+        return { success: true };
+      }
+
       const { Worker } = require('worker_threads');
       const nodePath = require('path');
       const { buildWorkerInitMessage } = require('./audio/whisper/inferenceConfig');

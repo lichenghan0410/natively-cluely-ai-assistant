@@ -135,7 +135,18 @@ export interface ElectronAPI {
   onTrialEnded:   (cb: (data: { choice: string }) => void) => () => void
 
   // STT Provider Management
-  setSttProvider: (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively') => Promise<{ success: boolean; error?: string }>
+  setSttProvider: (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper') => Promise<{ success: boolean; error?: string }>
+  localWhisperGetModels: () => Promise<{ models: any[]; activeModelId: string; sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
+  localWhisperSetModel: (modelId: string) => Promise<{ success: boolean }>
+  localWhisperGetBackendConfig: () => Promise<{ sttBackend: 'whispercpp' | 'medium'; whisperCppModel: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
+  localWhisperSetBackendConfig: (cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => Promise<{ success: boolean; error?: string }>
+  localWhisperDeleteModel: (modelId: string) => Promise<{ success: boolean; error?: string }>
+  localWhisperStartDownload: (modelId: string) => Promise<{ success: boolean; error?: string }>
+  onLocalWhisperDownloadProgress: (callback: (data: { modelId: string; progress: number }) => void) => () => void
+  onLocalWhisperDownloadComplete: (callback: (data: { modelId: string }) => void) => () => void
+  onLocalWhisperDownloadError: (callback: (data: { modelId: string; error: string }) => void) => () => void
+  localWhisperPreload: (modelId?: string) => Promise<{ success: boolean; reason?: string; error?: string }>
+  localWhisperGetHardware: () => Promise<{ arch: string; platform: string; cpuModel: string; isAppleSilicon: boolean; totalRamGb: number; tier: string; recommendation: string; recommendedModel: string }>
   getSttProvider: () => Promise<string>
   setGroqSttApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
   setOpenAiSttApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>

@@ -1071,8 +1071,10 @@ export class AppState {
           : sm.get('localWhisperModelMic');
         if (override) modelId = override;
       }
-      console.log(`[Main] Using LocalWhisperSTT for ${speaker}, model: ${modelId}`);
-      const lws = new LocalWhisperSTT(modelId);
+      const sttBackend = sm.get('sttBackend') ?? 'whispercpp';
+      const whisperCppModel = sm.get('whisperCppModel') ?? 'large-v3-turbo-q5_0';
+      console.log(`[Main] Using LocalWhisperSTT for ${speaker}, model: ${modelId}, backend: ${sttBackend}, whisper.cpp model: ${whisperCppModel}`);
+      const lws = new LocalWhisperSTT(modelId, { sttBackend, whisperCppModel });
       // Channel label disambiguates the two concurrent instances in latency logs.
       lws.setChannel(speaker === 'interviewer' ? 'system' : 'mic');
       stt = lws as any;
@@ -2827,6 +2829,26 @@ export class AppState {
     // is now bounded by the synchronous block above (~1–5ms typical).
   }
 
+  public cleanupAudioPipelineForQuit(): void {
+    this.isMeetingActive = false;
+    this._isDraining = false;
+
+    this.systemAudioCapture?.stop();
+    this.microphoneCapture?.stop();
+    this.audioTestCapture?.stop();
+    this.stopDefaultOutputWatcher();
+
+    (this.googleSTT as any)?.dispose?.();
+    this.googleSTT?.stop();
+    (this.googleSTT_User as any)?.dispose?.();
+    this.googleSTT_User?.stop();
+
+    this.googleSTT = null;
+    this.googleSTT_User = null;
+    this.systemAudioCapture = null;
+    this.microphoneCapture = null;
+  }
+
   private async processCompletedMeetingForRAG(meetingId: string): Promise<void> {
     if (!this.ragManager) return;
 
@@ -4174,6 +4196,7 @@ async function initializeApp() {
   app.on("before-quit", (event) => {
     console.log("App is quitting, cleaning up resources...");
     appState.setQuitting(true);
+    appState.cleanupAudioPipelineForQuit();
 
     // ROUND 2 FIX (#9): synchronously stop the CGEventTap worker thread
     // BEFORE V8 starts tearing down. The tap callback holds an

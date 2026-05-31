@@ -32,16 +32,21 @@
  */
 
 import { EventEmitter } from 'events';
-import { Worker } from 'worker_threads';
-import path from 'path';
-import fs from 'fs';
 import { resampleToF32 } from './whisper/audioResampler';
 import { VadProcessor } from './whisper/vadProcessor';
 import { filterHallucination } from './whisper/hallucinationFilter';
 import { configureTransformersCache } from './whisper/modelManager';
-import { modelPreloader } from './whisper/modelPreloader';
-import { buildWorkerInitMessage } from './whisper/inferenceConfig';
-import type { WorkerOutMessage } from './whisper/types';
+import { MediumOnnxBackend } from './whisper/mediumOnnxBackend';
+import { WhisperCppBackend } from './whisper/whisperCppBackend';
+import type { BackendMessage, InferenceBackend } from './whisper/inferenceBackend';
+import { resolveLocalWhisperBackend, type LocalSttBackend } from './whisper/backendSelection';
+import { hasNvidiaCudaSync } from './whisper/whisperCppServer';
+import { isWhisperCppRuntimeReady, type WhisperCppModelKey } from './whisper/whisperCppAssets';
+
+export interface LocalWhisperSTTOptions {
+    sttBackend?: LocalSttBackend;
+    whisperCppModel?: WhisperCppModelKey;
+}
 
 export class LocalWhisperSTT extends EventEmitter {
     private readonly modelId: string;
@@ -81,11 +86,11 @@ export class LocalWhisperSTT extends EventEmitter {
     // Optional channel label ('mic' / 'system') — disambiguates log lines
     // when both LocalWhisperSTT instances run the same model.
     private channelLabel = '';
-    private worker: Worker | null = null;
+    private backend: InferenceBackend | null = null;
     private vad: VadProcessor | null = null;
     private isActive = false;
     private taskCounter = 0;
-    private workerReady = false;
+    private backendReady = false;
     private isDrainingFinals = false;
     private drainingFinalsInFlight = 0;
     // Pending audio waiting for the worker to become ready. Always finals —
@@ -100,7 +105,7 @@ export class LocalWhisperSTT extends EventEmitter {
     // 5s grace timer for the previous worker to finish in-flight transcribes
     // before we terminate it. Tracked so rapid stop/start cycles or app quit
     // don't pin the event loop with stale termination timers.
-    private workerTerminateTimer: ReturnType<typeof setTimeout> | null = null;
+    private backendTerminateTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Streaming inference loop state.
     // Self-chaining setTimeout (not setInterval) so the delay can adapt at
@@ -128,9 +133,14 @@ export class LocalWhisperSTT extends EventEmitter {
     private streamingTaskInFlight = false;
     private streamingTaskId: string | null = null;
 
-    constructor(modelId: string) {
+    private readonly preferredBackend: LocalSttBackend;
+    private readonly whisperCppModel: WhisperCppModelKey;
+
+    constructor(modelId: string, options: LocalWhisperSTTOptions = {}) {
         super();
         this.modelId = modelId;
+        this.preferredBackend = options.sttBackend ?? 'whispercpp';
+        this.whisperCppModel = options.whisperCppModel ?? 'large-v3-turbo-q5_0';
         configureTransformersCache();
 
         // Tune the streaming loop for this specific model's characteristics.
@@ -195,9 +205,9 @@ export class LocalWhisperSTT extends EventEmitter {
     }
 
     private maybePushPromptToWorker(): void {
-        if (!this.worker || !this.workerReady) return; // pushed in flushPending after ready
+        if (!this.backend || !this.backendReady) return; // pushed in flushPending after ready
         if (this.contextPrompt === this.contextPromptSentToWorker) return;
-        this.worker.postMessage({ type: 'setPrompt', prompt: this.contextPrompt });
+        this.backend.setPrompt(this.contextPrompt);
         this.contextPromptSentToWorker = this.contextPrompt;
     }
 
@@ -207,7 +217,7 @@ export class LocalWhisperSTT extends EventEmitter {
         this.drainingFinalsInFlight = 0;
         this.isActive = true;
         this.vad = new VadProcessor();
-        this.spawnWorker();
+        this.spawnBackend();
         this.startStreamingLoop();
     }
 
@@ -242,11 +252,11 @@ export class LocalWhisperSTT extends EventEmitter {
         this.trackedSegmentId = 0;
         this.latencyLogCounter = 0;
 
-        const w = this.worker;
-        if (w) {
+        const backend = this.backend;
+        if (backend) {
             const shouldKeepWorkerForFinals = this.isDrainingFinals && (this.pendingAudio.length > 0 || this.drainingFinalsInFlight > 0);
             if (shouldKeepWorkerForFinals) return;
-            this.beginWorkerTermination(w);
+            this.beginBackendTermination(backend);
         }
     }
 
@@ -296,6 +306,31 @@ export class LocalWhisperSTT extends EventEmitter {
         segs.forEach(s => this.dispatchFinal(s.samples));
     }
 
+    dispose(): void {
+        this.isActive = false;
+        this.stopStreamingLoop();
+        if (this.gapFlushTimer) {
+            clearTimeout(this.gapFlushTimer);
+            this.gapFlushTimer = null;
+        }
+        if (this.backendTerminateTimer) {
+            clearTimeout(this.backendTerminateTimer);
+            this.backendTerminateTimer = null;
+        }
+        this.vad = null;
+        this.pendingAudio = [];
+        this.isDrainingFinals = false;
+        this.drainingFinalsInFlight = 0;
+        this.backendReady = false;
+        const backend = this.backend;
+        this.backend = null;
+        if (backend) {
+            backend.removeAllListeners('message');
+            backend.removeAllListeners('error');
+            backend.dispose();
+        }
+    }
+
     /* ──────────────── Streaming inference loop ──────────────── */
 
     private startStreamingLoop(): void {
@@ -336,7 +371,7 @@ export class LocalWhisperSTT extends EventEmitter {
     }
 
     private streamingTick(): void {
-        if (!this.isActive || !this.vad || !this.workerReady || !this.worker) {
+        if (!this.isActive || !this.vad || !this.backendReady || !this.backend) {
             this.recordStreamingStall();
             return;
         }
@@ -360,10 +395,7 @@ export class LocalWhisperSTT extends EventEmitter {
         const taskId = `s${++this.taskCounter}`;
         this.streamingTaskId = taskId;
         const copy = open.samples.slice();
-        this.worker.postMessage(
-            { type: 'transcribe', taskId, audio: copy, language: this.language, streaming: true },
-            [copy.buffer]
-        );
+        this.backend.transcribe({ taskId, audio: copy, language: this.language, streaming: true });
     }
 
     private recordStreamingStall(): void {
@@ -512,14 +544,14 @@ export class LocalWhisperSTT extends EventEmitter {
     /* ──────────────── Final segment dispatch ──────────────── */
 
     private dispatchFinal(audio: Float32Array): void {
-        if (!this.worker) return;
+        if (!this.backend) return;
 
         // A final pass closes the streaming window — clear agreement state so
         // the next segment starts clean.
         this.resetAgreementState();
         this.streamingTaskInFlight = false;
 
-        if (!this.workerReady) {
+        if (!this.backendReady) {
             const MAX_PENDING = 500;
             if (this.pendingAudio.length < MAX_PENDING) {
                 this.pendingAudio.push(audio.slice());
@@ -538,81 +570,48 @@ export class LocalWhisperSTT extends EventEmitter {
     }
 
     private sendTranscribe(audio: Float32Array, streaming: boolean): void {
-        if (!this.worker) return;
+        if (!this.backend) return;
         const taskId = `${streaming ? 's' : 't'}${++this.taskCounter}`;
         const copy = audio.slice();
-        this.worker.postMessage(
-            { type: 'transcribe', taskId, audio: copy, language: this.language, streaming },
-            [copy.buffer]
-        );
+        this.backend.transcribe({ taskId, audio: copy, language: this.language, streaming });
     }
 
-    /* ──────────────── Worker lifecycle ──────────────── */
+    /* ──────────────── Backend lifecycle ──────────────── */
 
-    private spawnWorker(): void {
-        const warm = modelPreloader.takeWarmWorker(this.modelId);
-        if (warm) {
-            console.log(`[LocalWhisperSTT] Using preloaded warm worker for ${this.modelId}`);
-            this.worker = warm;
-            this.workerReady = true;
-            this.attachWorkerListeners();
-            this.flushPending();
+    private spawnBackend(): void {
+        const selected = resolveLocalWhisperBackend({
+            preferredBackend: this.preferredBackend,
+            hasNvidiaCuda: hasNvidiaCudaSync(),
+            whisperCppReady: isWhisperCppRuntimeReady(this.whisperCppModel),
+        });
+
+        if (selected === 'whispercpp') {
+            console.log(`[LocalWhisperSTT] Starting whisper.cpp backend: ${this.whisperCppModel}`);
+            this.backend = new WhisperCppBackend(this.whisperCppModel);
         } else {
-            console.log(`[LocalWhisperSTT] Cold-starting worker for ${this.modelId}`);
-            // esbuild's bundle:true config inlines this module into main.js, so
-            // __dirname can be either `dist-electron/electron/audio/` (when this
-            // file is loaded as a standalone module) or `dist-electron/electron/`
-            // (when inlined into the main.js bundle). Probe both to stay robust
-            // across build modes — ADR-001 Phase 1 Step 2 hit this in dev.
-            const candidates = [
-                path.join(__dirname, 'whisper', 'whisperWorker.js'),
-                path.join(__dirname, 'audio', 'whisper', 'whisperWorker.js'),
-            ];
-            const workerPath = candidates.find(p => fs.existsSync(p));
-            if (!workerPath) {
-                throw new Error(
-                    `whisperWorker.js not found. Tried: ${candidates.join(', ')}`
-                );
-            }
-            // Whisper Large v3 weights are ~1.5 GB (615 MB encoder + 873 MB
-            // decoder, q8 quantised). transformers.js reads each ONNX into a
-            // V8 ArrayBuffer before handing it to ORT, so a stock worker
-            // (default ~1.5 GB old-space cap) hits `v8::ArrayBuffer::New
-            // Allocation failed - process out of memory` mid-load. Bump the
-            // heap to 8 GB — covers Large v3 load + peak decode allocations
-            // with headroom; users on lower-RAM machines that picked a
-            // smaller model in Settings still won't allocate more than they
-            // need (V8 grows the heap lazily up to this cap).
-            this.worker = new Worker(workerPath, {
-                resourceLimits: {
-                    maxOldGenerationSizeMb: 8192,
-                },
-            });
-            this.attachWorkerListeners();
-            this.worker.postMessage(buildWorkerInitMessage(this.modelId));
+            console.log(`[LocalWhisperSTT] Starting Medium ONNX backend: ${this.modelId}`);
+            this.backend = new MediumOnnxBackend(this.modelId);
         }
+
+        this.backendReady = false;
+        this.attachBackendListeners(this.backend);
+        this.backend.init();
     }
 
-    private attachWorkerListeners(): void {
-        if (!this.worker) return;
-
-        this.worker.on('message', (msg: WorkerOutMessage) => {
+    private attachBackendListeners(backend: InferenceBackend): void {
+        backend.on('message', (msg: BackendMessage) => {
             if (msg.type === 'ready') {
-                this.workerReady = true;
+                this.backendReady = true;
                 this.flushPending();
                 return;
             }
 
             // After stop(), allow only the explicitly flushed final segments to
-            // return during the 5s drain window; partials and unrelated worker
+            // return during the 5s drain window; partials and unrelated backend
             // messages remain ignored on a torn-down instance.
             if (!this.isActive && !(this.isDrainingFinals && msg.type === 'result')) return;
 
             if (msg.type === 'partial') {
-                // Drop partials whose segment has already been finalized — the
-                // agreement baseline is reset on every final dispatch and the
-                // taskId is invalidated, so a late partial would otherwise
-                // corrupt the next segment.
                 if (msg.taskId !== this.streamingTaskId) {
                     this.streamingTaskInFlight = false;
                     return;
@@ -629,30 +628,28 @@ export class LocalWhisperSTT extends EventEmitter {
                     }
                     this.emit('transcript', { text, isFinal: true, confidence: 0.9 });
                 }
-                // Reset segment timer regardless of emit (silent finals also close
-                // the segment). Next write() that opens a fresh VAD segment will
-                // re-stamp via the segment-id check.
                 this.segmentOpenedAt = 0;
                 if (this.isDrainingFinals) {
                     this.drainingFinalsInFlight = Math.max(0, this.drainingFinalsInFlight - 1);
-                    if (this.drainingFinalsInFlight === 0 && this.worker) {
-                        this.beginWorkerTermination(this.worker);
+                    if (this.drainingFinalsInFlight === 0 && this.backend) {
+                        this.beginBackendTermination(this.backend);
                     }
                 }
             } else if (msg.type === 'error') {
-                console.error('[LocalWhisperSTT] Worker error:', msg.message);
+                console.error('[LocalWhisperSTT] Backend error:', msg.message);
+                if (this.backend?.id === 'whispercpp' && msg.message.includes('fallback required')) {
+                    this.switchToMediumFallback();
+                    return;
+                }
                 if (this.isDrainingFinals && msg.taskId?.startsWith('t')) {
                     this.drainingFinalsInFlight = Math.max(0, this.drainingFinalsInFlight - 1);
-                    if (this.drainingFinalsInFlight === 0 && this.worker) {
-                        this.beginWorkerTermination(this.worker);
+                    if (this.drainingFinalsInFlight === 0 && this.backend) {
+                        this.beginBackendTermination(this.backend);
                     }
                 }
-                // If the failed task was the in-flight streaming one, unblock
-                // the loop so the next tick can fire.
                 if (msg.taskId && msg.taskId === this.streamingTaskId) {
                     this.streamingTaskInFlight = false;
                     this.streamingTaskId = null;
-                    // Worker is free again; reset backoff so next tick is prompt.
                     this.streamingStallCount = 0;
                     this.streamingNextDelayMs = this.streamingIntervalBaseMs;
                 }
@@ -664,7 +661,18 @@ export class LocalWhisperSTT extends EventEmitter {
             }
         });
 
-        this.worker.on('error', (err) => this.emit('error', err));
+        backend.on('error', (err) => this.emit('error', err));
+    }
+
+    private switchToMediumFallback(): void {
+        if (this.backend?.id === 'medium') return;
+        console.warn('[LocalWhisperSTT] Switching to Medium ONNX fallback');
+        this.backend?.dispose();
+        this.backend = new MediumOnnxBackend(this.modelId);
+        this.backendReady = false;
+        this.contextPromptSentToWorker = '';
+        this.attachBackendListeners(this.backend);
+        this.backend.init();
     }
 
     private flushPending(): void {
@@ -674,28 +682,28 @@ export class LocalWhisperSTT extends EventEmitter {
         this.maybePushPromptToWorker();
         const queued = this.pendingAudio.splice(0);
         queued.forEach(audio => this.sendTranscribe(audio, false));
-        if (this.isDrainingFinals && queued.length === 0 && this.drainingFinalsInFlight === 0 && this.worker) {
-            this.beginWorkerTermination(this.worker);
+        if (this.isDrainingFinals && queued.length === 0 && this.drainingFinalsInFlight === 0 && this.backend) {
+            this.beginBackendTermination(this.backend);
         }
     }
 
-    private beginWorkerTermination(w: Worker): void {
-        this.worker = null;
-        this.workerReady = false;
+    private beginBackendTermination(backend: InferenceBackend): void {
+        this.backend = null;
+        this.backendReady = false;
         this.isDrainingFinals = false;
         this.drainingFinalsInFlight = 0;
-        // Reset the sent-prompt tracker: a future spawnWorker call will get a
-        // fresh worker with empty cache, so we must re-push on next ready.
+        // Reset the sent-prompt tracker: a future backend gets an empty cache,
+        // so we must re-push on next ready.
         this.contextPromptSentToWorker = '';
-        w.removeAllListeners('message');
-        w.removeAllListeners('error');
-        if (this.workerTerminateTimer) clearTimeout(this.workerTerminateTimer);
+        backend.removeAllListeners('message');
+        backend.removeAllListeners('error');
+        if (this.backendTerminateTimer) clearTimeout(this.backendTerminateTimer);
         const t = setTimeout(() => {
-            this.workerTerminateTimer = null;
-            w.terminate();
+            this.backendTerminateTimer = null;
+            backend.dispose();
         }, 5000);
         // unref so the timer doesn't pin the Node event loop on app quit.
         (t as any).unref?.();
-        this.workerTerminateTimer = t;
+        this.backendTerminateTimer = t;
     }
 }

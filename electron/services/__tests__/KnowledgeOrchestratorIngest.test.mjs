@@ -77,16 +77,22 @@ function makeTempFile(content, ext = '.txt') {
 // ---------------------------------------------------------------------------
 // Dynamic imports (after build)
 // ---------------------------------------------------------------------------
-const { KnowledgeDatabaseManager } = await import(
-    pathToFileURL(path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js')).href
-);
-const orchestratorMod = await import(
-    pathToFileURL(path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeOrchestrator.js')).href
-);
-const { KnowledgeOrchestrator } = orchestratorMod;
-const { DocType } = await import(
-    pathToFileURL(path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/types.js')).href
-);
+const premiumDbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js');
+const premiumOrchestratorPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeOrchestrator.js');
+const premiumTypesPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/types.js');
+const premiumKnowledgeAvailable = fs.existsSync(premiumDbPath)
+    && fs.existsSync(premiumOrchestratorPath)
+    && fs.existsSync(premiumTypesPath);
+
+let KnowledgeDatabaseManager;
+let KnowledgeOrchestrator;
+let DocType;
+
+if (premiumKnowledgeAvailable) {
+    ({ KnowledgeDatabaseManager } = await import(pathToFileURL(premiumDbPath).href));
+    ({ KnowledgeOrchestrator } = await import(pathToFileURL(premiumOrchestratorPath).href));
+    ({ DocType } = await import(pathToFileURL(premiumTypesPath).href));
+}
 
 const MOCK_GENERATE_CONTENT = async (contents) => {
     const prompt = contents[0]?.text || '';
@@ -118,7 +124,7 @@ const MOCK_GENERATE_CONTENT = async (contents) => {
 
 const MOCK_EMBED_FN = async () => Array(128).fill(0).map((_, i) => (i % 7) * 0.01);
 
-describe('FINDING-004: KnowledgeOrchestrator ingest pipeline', () => {
+describe('FINDING-004: KnowledgeOrchestrator ingest pipeline', { skip: premiumKnowledgeAvailable ? false : 'premium knowledge modules are not present in this checkout' }, () => {
     let db;
     let orchestrator;
     let tmpResumeFile;

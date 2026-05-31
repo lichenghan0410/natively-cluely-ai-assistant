@@ -21,6 +21,8 @@ export interface AppSettings {
     phoneMirrorEnabled?: boolean;
     phoneMirrorExposeOnLan?: boolean;
     localWhisperModel?: string;
+    sttBackend?: 'whispercpp' | 'medium';
+    whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0';
     // Per-channel model overrides for local Whisper. When
     // localWhisperPerChannelEnabled is true, the two LocalWhisperSTT instances
     // pick their own model (mic / system) instead of sharing localWhisperModel.

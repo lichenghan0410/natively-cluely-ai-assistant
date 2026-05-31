@@ -77,8 +77,10 @@ interface ElectronAPI {
 
   // STT Provider Management
   setSttProvider: (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper') => Promise<{ success: boolean; error?: string }>
-  localWhisperGetModels: () => Promise<{ models: any[]; activeModelId: string }>
+  localWhisperGetModels: () => Promise<{ models: any[]; activeModelId: string; sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
   localWhisperSetModel: (modelId: string) => Promise<{ success: boolean }>
+  localWhisperGetBackendConfig: () => Promise<{ sttBackend: 'whispercpp' | 'medium'; whisperCppModel: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
+  localWhisperSetBackendConfig: (cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => Promise<{ success: boolean; error?: string }>
   localWhisperDeleteModel: (modelId: string) => Promise<{ success: boolean; error?: string }>
   localWhisperStartDownload: (modelId: string) => Promise<{ success: boolean; error?: string }>
   onLocalWhisperDownloadProgress: (callback: (data: { modelId: string; progress: number }) => void) => () => void
@@ -667,6 +669,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   testSttConnection: (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox', apiKey: string, region?: string) => ipcRenderer.invoke("test-stt-connection", provider, apiKey, region),
   localWhisperGetModels: () => ipcRenderer.invoke('local-whisper-get-models'),
   localWhisperSetModel: (modelId: string) => ipcRenderer.invoke('local-whisper-set-model', modelId),
+  localWhisperGetBackendConfig: () => ipcRenderer.invoke('local-whisper-get-backend-config'),
+  localWhisperSetBackendConfig: (cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => ipcRenderer.invoke('local-whisper-set-backend-config', cfg),
   localWhisperDeleteModel: (modelId: string) => ipcRenderer.invoke('local-whisper-delete-model', modelId),
   localWhisperStartDownload: (modelId: string) => ipcRenderer.invoke('local-whisper-start-download', modelId),
   onLocalWhisperDownloadProgress: (cb: (data: { modelId: string; progress: number }) => void) => {
