@@ -28,6 +28,8 @@ export function initializeIpcHandlers(appState: AppState): void {
    * Used to gate profile intelligence features (resume upload, JD upload, company research, etc.).
    */
   const isProOrTrialActive = (): boolean => {
+    // ACCEPTANCE/DEV: unlock pro-gated features during dev runs.
+    if (process.env.NODE_ENV === 'development') return true;
     // 1. Full premium license (Dodo / Gumroad / Natively API subscription)
     try {
       const { LicenseManager } = require('../premium/electron/services/LicenseManager');
@@ -2071,10 +2073,31 @@ export function initializeIpcHandlers(appState: AppState): void {
       const { getAvailableModels } = require('./audio/whisper/modelManager');
       const models = getAvailableModels();
       const activeModelId = SettingsManager.getInstance().get('localWhisperModel') ?? '';
-      return { models, activeModelId };
+      const sttBackend = SettingsManager.getInstance().get('sttBackend') ?? 'whispercpp';
+      const whisperCppModel = SettingsManager.getInstance().get('whisperCppModel') ?? 'large-v3-turbo-q5_0';
+      return { models, activeModelId, sttBackend, whisperCppModel };
     } catch (e: any) {
       console.error('[IPC] local-whisper-get-models error:', e.message);
-      return { models: [], activeModelId: '' };
+      return { models: [], activeModelId: '', sttBackend: 'whispercpp', whisperCppModel: 'large-v3-turbo-q5_0' };
+    }
+  });
+
+  safeHandle("local-whisper-get-backend-config", async () => {
+    const sm = SettingsManager.getInstance();
+    return {
+      sttBackend: sm.get('sttBackend') ?? 'whispercpp',
+      whisperCppModel: sm.get('whisperCppModel') ?? 'large-v3-turbo-q5_0',
+    };
+  });
+
+  safeHandle("local-whisper-set-backend-config", async (_, cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => {
+    try {
+      const sm = SettingsManager.getInstance();
+      if (cfg?.sttBackend === 'whispercpp' || cfg?.sttBackend === 'medium') sm.set('sttBackend', cfg.sttBackend);
+      if (cfg?.whisperCppModel === 'large-v3-turbo-q5_0' || cfg?.whisperCppModel === 'medium-q5_0') sm.set('whisperCppModel', cfg.whisperCppModel);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
     }
   });
 
@@ -2128,6 +2151,23 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
     activeWhisperDownloads.add(modelId);
     try {
+      if (modelId === 'whispercpp-runtime' || modelId === 'large-v3-turbo-q5_0' || modelId === 'medium-q5_0') {
+        const { downloadWhisperCppTarget } = require('./audio/whisper/whisperCppDownloader');
+        const sender = event.sender;
+        downloadWhisperCppTarget(modelId, ({ progress }: any) => {
+          if (!sender.isDestroyed()) {
+            sender.send('local-whisper-download-progress', { modelId, progress });
+          }
+        }).then(() => {
+          activeWhisperDownloads.delete(modelId);
+          if (!sender.isDestroyed()) sender.send('local-whisper-download-complete', { modelId });
+        }).catch((err: Error) => {
+          activeWhisperDownloads.delete(modelId);
+          if (!sender.isDestroyed()) sender.send('local-whisper-download-error', { modelId, error: err.message });
+        });
+        return { success: true };
+      }
+
       const { Worker } = require('worker_threads');
       const nodePath = require('path');
       const { buildWorkerInitMessage } = require('./audio/whisper/inferenceConfig');
@@ -2168,7 +2208,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       const { isModelCached } = require('./audio/whisper/modelManager');
       const { resolveInferenceConfig } = require('./audio/whisper/inferenceConfig');
       const { SettingsManager } = require('./services/SettingsManager');
-      const id = modelId || SettingsManager.getInstance().get('localWhisperModel') || 'Xenova/whisper-tiny.en';
+      const id = modelId || SettingsManager.getInstance().get('localWhisperModel') || 'Xenova/whisper-medium';
       // Pass active dtype so the cache check verifies the SPECIFIC ONNX
       // files (e.g. encoder_model.onnx for fp32) are present — not just
       // "directory non-empty". Otherwise a v2-cached _quantized.onnx-only
@@ -2294,6 +2334,33 @@ export function initializeIpcHandlers(appState: AppState): void {
       // Broadcast to all windows
       BrowserWindow.getAllWindows().forEach(win => {
         win.webContents.send('groq-fast-text-changed', enabled);
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get generative-assist (privacy) toggle — ADR-005 Phase 2.3
+  safeHandle("get-generative-assist-enabled", () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      return { enabled: SettingsManager.getInstance().getGenerativeAssistEnabled() };
+    } catch (error: any) {
+      return { enabled: true };
+    }
+  });
+
+  // Set generative-assist (privacy) toggle. When off, the realtime assist stays
+  // local and never sends the transcript/notes to the cloud generator (Codex).
+  safeHandle("set-generative-assist-enabled", (_, enabled: boolean) => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      SettingsManager.getInstance().set('generativeAssistEnabled', enabled);
+
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('generative-assist-changed', enabled);
       });
 
       return { success: true };

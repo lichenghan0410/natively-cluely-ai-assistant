@@ -1,5 +1,7 @@
 import { DatabaseManager } from '../db/DatabaseManager';
 import { ModeContextRetriever } from './ModeContextRetriever';
+import { JAPRISE_REFERENCE_FILES, JAPRISE_NOTE_SECTIONS } from './modes/japriseTemplate';
+import { detectJaprisePart, buildJaprisePartDirective, extractPart3Points, buildPart3PointsDirective, japrisePartName, PART_FILE_PREFIX, type JaprisePart } from './modes/japrisePart';
 import {
     MODE_GENERAL_PROMPT,
     MODE_LOOKING_FOR_WORK_PROMPT,
@@ -8,6 +10,7 @@ import {
     MODE_TEAM_MEET_PROMPT,
     MODE_LECTURE_PROMPT,
     MODE_TECHNICAL_INTERVIEW_PROMPT,
+    MODE_JAPRISE_PROMPT,
     SHARED_MODE_PREFIX,
     SHARED_MODE_PREFIX_SHORT,
 } from '../llm/prompts';
@@ -19,7 +22,8 @@ export type ModeTemplateType =
     | 'recruiting'
     | 'team-meet'
     | 'lecture'
-    | 'technical-interview';
+    | 'technical-interview'
+    | 'japrise';
 
 export interface Mode {
     id: string;
@@ -59,6 +63,7 @@ export const MODE_TEMPLATES: Array<{
     { type: 'looking-for-work',     label: 'Looking for work',     description: 'Answer interview questions with confidence and clarity.' },
     { type: 'technical-interview',  label: 'Technical Interview',  description: 'Whiteboard-style coding and system design support.' },
     { type: 'lecture',              label: 'Lecture',              description: 'Capture key concepts and content from lectures.' },
+    { type: 'japrise',              label: 'Japrise 口语练习',      description: '日语口语测试（Japrise 五部分）的实时答题练习辅助。' },
 ];
 
 // Default note sections seeded when a mode is created from a template
@@ -110,6 +115,7 @@ export const TEMPLATE_NOTE_SECTIONS: Record<ModeTemplateType, Array<{ title: str
         { title: 'Areas to study',    description: 'Topics or gaps identified that need more preparation.' },
         { title: 'Action items',      description: 'Follow-up steps — e.g. send code, study specific topics, await next round.' },
     ],
+    japrise: JAPRISE_NOTE_SECTIONS,
 };
 
 const TEMPLATE_SYSTEM_PROMPTS: Record<ModeTemplateType, string> = {
@@ -122,6 +128,15 @@ const TEMPLATE_SYSTEM_PROMPTS: Record<ModeTemplateType, string> = {
     recruiting: MODE_RECRUITING_PROMPT,
     'team-meet': MODE_TEAM_MEET_PROMPT,
     lecture: MODE_LECTURE_PROMPT,
+    japrise: MODE_JAPRISE_PROMPT,
+};
+
+// Default reference files seeded when a mode is created from a template.
+// (Symmetric to TEMPLATE_NOTE_SECTIONS, but optional — only templates that ship
+// a starter corpus appear here.) Seeded files are normal, user-editable
+// reference files and become the retrieval corpus for the mode.
+export const TEMPLATE_REFERENCE_FILES: Partial<Record<ModeTemplateType, Array<{ fileName: string; content: string }>>> = {
+    japrise: JAPRISE_REFERENCE_FILES,
 };
 
 // Startup invariant: every MODE_*_PROMPT must begin with one of the two shared
@@ -239,6 +254,19 @@ export class ModesManager {
                 title: s.title,
                 description: s.description,
                 sortOrder: i,
+            });
+        });
+        // Seed default reference files (starter corpus) for templates that ship one
+        // (e.g. Japrise's five-part question bank). These are normal, user-editable
+        // reference files and become the mode's retrieval corpus.
+        const defaultFiles = TEMPLATE_REFERENCE_FILES[params.templateType] ?? [];
+        defaultFiles.forEach((f, i) => {
+            const fileId = `ref_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+            DatabaseManager.getInstance().addReferenceFile({
+                id: fileId,
+                modeId: id,
+                fileName: f.fileName,
+                content: f.content,
             });
         });
         return {
@@ -368,17 +396,66 @@ export class ModesManager {
     private static readonly MAX_FILE_CHARS = 12_000;
     private static readonly MAX_TOTAL_CHARS = 40_000;
 
+    // ── Japrise Phase 2.2: per-part routing ───────────────────────
+    // Detect the active Japrise part from transcript/query and (a) produce the
+    // directive injected ahead of retrieved context, (b) reorder files so the
+    // active part's reference is prioritised. No-op for non-Japrise modes.
+    private japriseRouting(mode: Mode, query: string, transcript?: string): { directive: string; part: JaprisePart | null } {
+        if (mode.templateType !== 'japrise') return { directive: '', part: null };
+        const text = `${query}\n${transcript ?? ''}`;
+        const part = detectJaprisePart(text);
+        if (!part) return { directive: '', part: null };
+        let directive = buildJaprisePartDirective(part);
+        // Part 3 coverage: deterministically extract the 3 required points from the
+        // prompt and inject them so the LLM tracks coverage of THOSE exact points.
+        if (part === 3) {
+            const points = extractPart3Points(text);
+            if (points) directive += '\n' + buildPart3PointsDirective(points);
+        }
+        return { directive, part };
+    }
+
+    private orderJapriseFiles(part: JaprisePart | null, files: ModeReferenceFile[]): ModeReferenceFile[] {
+        if (!part) return files;
+        const prefix = PART_FILE_PREFIX[part];
+        const active = files.filter(f => f.fileName.startsWith(prefix));
+        if (active.length === 0) return files;
+        return [...active, ...files.filter(f => !f.fileName.startsWith(prefix))];
+    }
+
+    /**
+     * ADR-005 Phase 2.4 — instant retrieval tier. Computes a fully local (no LLM,
+     * no embedding, no cloud) reference payload for the active Japrise part, for the
+     * renderer to display the instant a part is detected. Returns null when the
+     * active mode is not Japrise or no part is detected in `text` — the caller then
+     * keeps the previous panel (so answer segments don't blank it out / flicker).
+     */
+    public getJapriseInstantReference(text: string): { part: JaprisePart; partName: string; directive: string; reference: string } | null {
+        const mode = this.getActiveMode();
+        if (!mode || mode.templateType !== 'japrise') return null;
+        const { directive, part } = this.japriseRouting(mode, text, undefined);
+        if (!part) return null;
+        const prefix = PART_FILE_PREFIX[part];
+        const reference = this.getReferenceFiles(mode.id).find(f => f.fileName.startsWith(prefix))?.content ?? '';
+        return { part, partName: japrisePartName(part), directive, reference };
+    }
+
     public buildRetrievedActiveModeContextBlock(query: string, transcript?: string, tokenBudget?: number): string {
         const mode = this.getActiveMode();
         if (!mode) return '';
 
-        const result = this.modeContextRetriever.retrieve(mode, this.getReferenceFiles(mode.id), {
+        const { directive, part } = this.japriseRouting(mode, query, transcript);
+        const files = this.orderJapriseFiles(part, this.getReferenceFiles(mode.id));
+
+        const result = this.modeContextRetriever.retrieve(mode, files, {
             query,
             transcript,
             tokenBudget,
         });
 
-        return result.formattedContext;
+        if (!directive) return result.formattedContext;
+        // Always surface the directive (esp. the Part 2 guard) even when retrieval is empty.
+        return result.formattedContext ? `${directive}\n${result.formattedContext}` : directive;
     }
 
     /**
@@ -391,7 +468,8 @@ export class ModesManager {
     public async buildRetrievedActiveModeContextBlockHybrid(query: string, transcript?: string, tokenBudget?: number): Promise<string> {
         const mode = this.getActiveMode();
         if (!mode) return '';
-        const files = this.getReferenceFiles(mode.id);
+        const { directive, part } = this.japriseRouting(mode, query, transcript);
+        const files = this.orderJapriseFiles(part, this.getReferenceFiles(mode.id));
 
         // Telemetry: rag_query / rag_hit / rag_miss / rag_lexical_fallback.
         let usedHybrid = false;
@@ -424,8 +502,10 @@ export class ModesManager {
                         properties: { chunkCount, modeTemplateType: mode.templateType },
                     });
                 } catch { /* non-fatal */ }
-                return result.formattedContext;
+                return directive ? `${directive}\n${result.formattedContext}` : result.formattedContext;
             }
+            // Empty hybrid result — fall through to the lexical builder, which
+            // re-attempts retrieval AND re-applies the Japrise directive.
             // Empty hybrid result — fall through to lexical so we still try.
         } catch (err) {
             console.warn('[ModesManager] hybrid retrieval failed, falling back to lexical:', (err as Error)?.message);

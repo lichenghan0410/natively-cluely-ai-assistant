@@ -11,6 +11,7 @@ const EXACT_BLOCKS = new Set([
   '(music)',
   'thank you for watching',
   'thanks for watching',
+  'ご視聴ありがとうございました',
   'you',
   'bye',
   '...',

@@ -14,10 +14,13 @@ async function downloadModels() {
     env.cacheDir = modelsDir;
     
     try {
-        // 1. Embedding model (RAG)
-        console.log('[download-models] Downloading Xenova/all-MiniLM-L6-v2...');
-        await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-        console.log('[download-models] all-MiniLM-L6-v2 downloaded.');
+        // 1. Embedding model (RAG) — multilingual-e5-small: Japanese-capable,
+        //    384d (same as the prior all-MiniLM ⇒ no vec-table migration).
+        //    dtype 'q8' matches LocalEmbeddingProvider so onnx/model_quantized.onnx
+        //    (~112MB int8) is fetched instead of the 448MB fp32 weights.
+        console.log('[download-models] Downloading Xenova/multilingual-e5-small (q8)...');
+        await pipeline('feature-extraction', 'Xenova/multilingual-e5-small', { dtype: 'q8' });
+        console.log('[download-models] multilingual-e5-small downloaded.');
 
         // 2. Zero-shot classification model (Intent Classifier)
         console.log('[download-models] Downloading Xenova/mobilebert-uncased-mnli...');

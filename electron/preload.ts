@@ -77,8 +77,10 @@ interface ElectronAPI {
 
   // STT Provider Management
   setSttProvider: (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper') => Promise<{ success: boolean; error?: string }>
-  localWhisperGetModels: () => Promise<{ models: any[]; activeModelId: string }>
+  localWhisperGetModels: () => Promise<{ models: any[]; activeModelId: string; sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
   localWhisperSetModel: (modelId: string) => Promise<{ success: boolean }>
+  localWhisperGetBackendConfig: () => Promise<{ sttBackend: 'whispercpp' | 'medium'; whisperCppModel: 'large-v3-turbo-q5_0' | 'medium-q5_0' }>
+  localWhisperSetBackendConfig: (cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => Promise<{ success: boolean; error?: string }>
   localWhisperDeleteModel: (modelId: string) => Promise<{ success: boolean; error?: string }>
   localWhisperStartDownload: (modelId: string) => Promise<{ success: boolean; error?: string }>
   onLocalWhisperDownloadProgress: (callback: (data: { modelId: string; progress: number }) => void) => () => void
@@ -183,6 +185,9 @@ interface ElectronAPI {
   // Groq Fast Text Mode
   getGroqFastTextMode: () => Promise<{ enabled: boolean }>
   setGroqFastTextMode: (enabled: boolean) => Promise<{ success: boolean; error?: string }>
+  // ADR-005 Phase 2.3 — generative-assist (privacy) toggle
+  getGenerativeAssistEnabled: () => Promise<{ enabled: boolean }>
+  setGenerativeAssistEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>
   getCodexCliConfig: () => Promise<{ enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number }>
   setCodexCliConfig: (config: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number }) => Promise<{ success: boolean; error?: string; config?: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number } }>
   testCodexCli: (config?: { enabled?: boolean; path?: string; model?: string; fastModel?: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string; resolvedPath?: string; config?: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number } }>
@@ -234,6 +239,9 @@ interface ElectronAPI {
 
   onUndetectableChanged: (callback: (state: boolean) => void) => () => void
   onGroqFastTextChanged: (callback: (enabled: boolean) => void) => () => void
+  // ADR-005 Phase 2.3/2.4 — generative-assist toggle sync + instant Japrise reference feed
+  onGenerativeAssistChanged: (callback: (enabled: boolean) => void) => () => void
+  onJapriseInstantReference: (callback: (payload: { part: number; partName: string; directive: string; reference: string }) => void) => () => void
   onModelChanged: (callback: (modelId: string) => void) => () => void
 
   // Ollama
@@ -667,6 +675,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   testSttConnection: (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox', apiKey: string, region?: string) => ipcRenderer.invoke("test-stt-connection", provider, apiKey, region),
   localWhisperGetModels: () => ipcRenderer.invoke('local-whisper-get-models'),
   localWhisperSetModel: (modelId: string) => ipcRenderer.invoke('local-whisper-set-model', modelId),
+  localWhisperGetBackendConfig: () => ipcRenderer.invoke('local-whisper-get-backend-config'),
+  localWhisperSetBackendConfig: (cfg: { sttBackend?: 'whispercpp' | 'medium'; whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0' }) => ipcRenderer.invoke('local-whisper-set-backend-config', cfg),
   localWhisperDeleteModel: (modelId: string) => ipcRenderer.invoke('local-whisper-delete-model', modelId),
   localWhisperStartDownload: (modelId: string) => ipcRenderer.invoke('local-whisper-start-download', modelId),
   onLocalWhisperDownloadProgress: (cb: (data: { modelId: string; progress: number }) => void) => {
@@ -1022,6 +1032,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Groq Fast Text Mode
   getGroqFastTextMode: () => ipcRenderer.invoke('get-groq-fast-text-mode'),
   setGroqFastTextMode: (enabled: boolean) => ipcRenderer.invoke('set-groq-fast-text-mode', enabled),
+  getGenerativeAssistEnabled: () => ipcRenderer.invoke('get-generative-assist-enabled'),
+  setGenerativeAssistEnabled: (enabled: boolean) => ipcRenderer.invoke('set-generative-assist-enabled', enabled),
   getCodexCliConfig: () => ipcRenderer.invoke('get-codex-cli-config'),
   setCodexCliConfig: (config: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number }) => ipcRenderer.invoke('set-codex-cli-config', config),
   testCodexCli: (config?: { enabled?: boolean; path?: string; model?: string; fastModel?: string; timeoutMs?: number }) => ipcRenderer.invoke('test-codex-cli', config),
@@ -1077,6 +1089,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on('groq-fast-text-changed', subscription)
     return () => {
       ipcRenderer.removeListener('groq-fast-text-changed', subscription)
+    }
+  },
+
+  onGenerativeAssistChanged: (callback: (enabled: boolean) => void) => {
+    const subscription = (_: any, enabled: boolean) => callback(enabled)
+    ipcRenderer.on('generative-assist-changed', subscription)
+    return () => {
+      ipcRenderer.removeListener('generative-assist-changed', subscription)
+    }
+  },
+
+  onJapriseInstantReference: (callback: (payload: { part: number; partName: string; directive: string; reference: string }) => void) => {
+    const subscription = (_: any, payload: any) => callback(payload)
+    ipcRenderer.on('intelligence-japrise-instant-reference', subscription)
+    return () => {
+      ipcRenderer.removeListener('intelligence-japrise-instant-reference', subscription)
     }
   },
 

@@ -1,0 +1,63 @@
+{
+  "sampleRate": 16000,
+  "chunkSamples": 480,
+  "maxSegmentMs": 14000,
+  "segments": [
+    {
+      "index": 1,
+      "name": "seg-01",
+      "durationSec": 2.64,
+      "durationMsVad": 2640,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-01.wav"
+    },
+    {
+      "index": 2,
+      "name": "seg-02",
+      "durationSec": 2.16,
+      "durationMsVad": 2160,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-02.wav"
+    },
+    {
+      "index": 3,
+      "name": "seg-03",
+      "durationSec": 2.52,
+      "durationMsVad": 2520,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-03.wav"
+    },
+    {
+      "index": 4,
+      "name": "seg-04",
+      "durationSec": 1.86,
+      "durationMsVad": 1860,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-04.wav"
+    },
+    {
+      "index": 5,
+      "name": "seg-05",
+      "durationSec": 1.71,
+      "durationMsVad": 1710,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-05.wav"
+    },
+    {
+      "index": 6,
+      "name": "seg-06",
+      "durationSec": 2.19,
+      "durationMsVad": 2190,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-06.wav"
+    },
+    {
+      "index": 7,
+      "name": "seg-07",
+      "durationSec": 4.02,
+      "durationMsVad": 4020,
+      "reason": "push(hangover/15s)",
+      "wav": "D:\\Interview APP\\spike-whispercpp\\vad-replay\\seg-07.wav"
+    }
+  ]
+}

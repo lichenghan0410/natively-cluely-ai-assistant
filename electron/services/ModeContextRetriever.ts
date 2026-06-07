@@ -56,7 +56,14 @@ function estimateTokens(text: string): number {
 }
 
 function wordsOf(text: string): string[] {
-    return text
+    // NFKC unifies full-/half-width forms before tokenizing so STT and
+    // full-width variants line up. Japanese has no word delimiters, so CJK
+    // runs are tokenized into character bigrams (a dependency-free CJK lexical
+    // standard) and unioned with the existing Latin tokens. Query and chunk
+    // pass through the same function, so both sides share one vocabulary.
+    // KEEP IN LOCK-STEP with ModeHybridRetriever.wordsOf.
+    const normalized = text.normalize('NFKC');
+    const latin = normalized
         .toLowerCase()
         // English possessive: collapse "Green's" → "green", "interviewer's" →
         // "interviewer". Symmetrically strips the `'s` suffix on both query
@@ -71,6 +78,17 @@ function wordsOf(text: string): string[] {
         .replace(/[^a-z0-9\s-]/g, ' ')
         .split(/\s+/)
         .filter(word => word.length > 2);
+
+    // Japanese (CJK) bigrams — bypass the Latin length>2 filter.
+    const cjk: string[] = [];
+    const runs = normalized.match(/[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]+/g);
+    if (runs) {
+        for (const run of runs) {
+            if (run.length === 1) cjk.push(run);
+            else for (let i = 0; i < run.length - 1; i++) cjk.push(run.slice(i, i + 2));
+        }
+    }
+    return latin.concat(cjk);
 }
 
 function chunkText(content: string): string[] {

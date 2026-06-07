@@ -57,6 +57,13 @@ export class RAGManager {
             // Backfill provider metadata for meetings that were embedded before the
             // embedding_provider column was written (or where the write failed silently).
             this._backfillEmbeddingProviderMetadata();
+            // Auto-migrate meetings stranded on an incompatible embedding provider —
+            // e.g. after the all-MiniLM ('local') → e5 ('local-e5-small') local-model
+            // upgrade. Native ANN search filters by provider so stale vectors never
+            // pollute results, but they still sit in the shared vec_chunks_<dim> table
+            // and can crowd the top-k before that filter, hurting recall. Re-embedding
+            // is on-device, background/queued, and no-ops when nothing is incompatible.
+            this.reindexIncompatibleMeetings().catch(() => { /* non-critical, suppress */ });
         }).catch(() => { /* non-critical, suppress */ });
     }
 

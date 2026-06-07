@@ -12,6 +12,7 @@ interface ModelInfo {
     status: 'available' | 'missing' | 'downloading' | 'error';
     errorMessage?: string;
     requiresAppleSilicon?: boolean;
+    backend?: 'onnx' | 'whispercpp';
 }
 
 interface HardwareInfo {
@@ -32,6 +33,8 @@ interface ChannelConfig {
 }
 
 const electronAPI = (window as any).electronAPI;
+type LocalBackend = 'whispercpp' | 'medium';
+type WhisperCppModel = 'large-v3-turbo-q5_0' | 'medium-q5_0';
 
 function PremiumSelect({ label, value, options, onChange, placeholder }: any) {
     const [isOpen, setIsOpen] = useState(false);
@@ -103,6 +106,10 @@ export function LocalWhisperModelPanel() {
         systemModelId: '',
         globalModelId: ''
     });
+    const [backendConfig, setBackendConfig] = useState<{ sttBackend: LocalBackend; whisperCppModel: WhisperCppModel }>({
+        sttBackend: 'whispercpp',
+        whisperCppModel: 'large-v3-turbo-q5_0'
+    });
     
     const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
     const [downloadingSet, setDownloadingSet] = useState<Set<string>>(new Set());
@@ -117,13 +124,19 @@ export function LocalWhisperModelPanel() {
             ]);
             
             if (modelsRes) setModels(modelsRes.models ?? []);
+            if (modelsRes?.sttBackend && modelsRes?.whisperCppModel) {
+                setBackendConfig({ sttBackend: modelsRes.sttBackend, whisperCppModel: modelsRes.whisperCppModel });
+            } else {
+                const backendRes = await electronAPI?.localWhisperGetBackendConfig?.();
+                if (backendRes) setBackendConfig(backendRes);
+            }
             if (hwRes) setHardware(hwRes);
             if (cfgRes) setConfig(cfgRes);
             
             // Auto-select initial models if none are set
             if (cfgRes && modelsRes && modelsRes.models) {
                 const list = modelsRes.models;
-                const avail = list.filter((m: any) => m.status === 'available');
+                const avail = list.filter((m: any) => m.status === 'available' && (m.backend ?? 'onnx') === 'onnx');
                 if (avail.length > 0) {
                     let needsUpdate = false;
                     const newCfg = { ...cfgRes };
@@ -219,18 +232,57 @@ export function LocalWhisperModelPanel() {
         await electronAPI?.localWhisperSetChannelConfig?.({ systemModelId: modelId });
     };
 
+    const setBackend = async (sttBackend: LocalBackend) => {
+        const next = { ...backendConfig, sttBackend };
+        setBackendConfig(next);
+        await electronAPI?.localWhisperSetBackendConfig?.({ sttBackend });
+    };
+
+    const setWhisperCppModel = async (whisperCppModel: WhisperCppModel) => {
+        const next = { ...backendConfig, whisperCppModel };
+        setBackendConfig(next);
+        await electronAPI?.localWhisperSetBackendConfig?.({ whisperCppModel });
+    };
+
     if (loading) {
         return <div className="p-4 flex justify-center text-text-tertiary"><Loader2 className="animate-spin w-5 h-5" /></div>;
     }
 
-    const availableModels = models.filter(m => m.status === 'available');
+    const availableModels = models.filter(m => m.status === 'available' && (m.backend ?? 'onnx') === 'onnx');
+    const whisperCppModels = models.filter(m => m.backend === 'whispercpp' && m.id !== 'whispercpp-runtime');
     
     return (
         <div className="space-y-4">
             <div className="bg-bg-card rounded-xl border border-border-subtle p-5 shadow-sm">
+                <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-text-primary">Local STT Backend</h3>
+                    <p className="text-xs text-text-secondary mt-1 leading-relaxed">Use whisper.cpp on CUDA PCs, with Medium ONNX as the fallback path.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                    <PremiumSelect
+                        label="Backend"
+                        value={backendConfig.sttBackend}
+                        onChange={setBackend}
+                        options={[
+                            { id: 'whispercpp', name: 'whisper.cpp CUDA' },
+                            { id: 'medium', name: 'Medium ONNX' }
+                        ]}
+                        placeholder="Select backend"
+                    />
+                    <PremiumSelect
+                        label="whisper.cpp Model"
+                        value={backendConfig.whisperCppModel}
+                        onChange={setWhisperCppModel}
+                        options={whisperCppModels}
+                        placeholder="Select GGML model"
+                    />
+                </div>
+            </div>
+
+            <div className="bg-bg-card rounded-xl border border-border-subtle p-5 shadow-sm">
                 <div className="mb-5">
-                    <h3 className="text-sm font-semibold text-text-primary">Local Engine Configuration</h3>
-                    <p className="text-xs text-text-secondary mt-1 leading-relaxed">Select the AI models you want to use for Speech-to-Text inference.</p>
+                    <h3 className="text-sm font-semibold text-text-primary">Medium ONNX Fallback</h3>
+                    <p className="text-xs text-text-secondary mt-1 leading-relaxed">Select the fallback model used when whisper.cpp is unavailable or disabled.</p>
                 </div>
 
                 <label className="flex items-center justify-between p-3.5 rounded-xl border border-border-subtle bg-bg-elevated/30 hover:bg-bg-elevated transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] cursor-pointer group mb-5 active:scale-[0.99]">
@@ -320,6 +372,9 @@ export function LocalWhisperModelPanel() {
                                         <span className="text-sm font-medium text-text-primary truncate tracking-tight">{model.name}</span>
                                         {isRecommended && (
                                             <span className="px-1.5 py-0.5 rounded-[4px] bg-accent-primary/10 text-accent-primary text-[9px] font-bold uppercase tracking-wider">Recommended</span>
+                                        )}
+                                        {model.backend === 'whispercpp' && (
+                                            <span className="px-1.5 py-0.5 rounded-[4px] bg-emerald-500/10 text-emerald-500 text-[9px] font-bold uppercase tracking-wider">whisper.cpp</span>
                                         )}
                                         {model.requiresAppleSilicon && (
                                             <span className="px-1.5 py-0.5 rounded-[4px] bg-purple-500/10 text-purple-500 text-[9px] font-bold uppercase tracking-wider">Apple Silicon</span>

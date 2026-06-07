@@ -52,9 +52,31 @@ class ModelPreloader {
 
         console.log(`[ModelPreloader] Warming worker for ${modelId}...`);
 
-        // __dirname at runtime = dist-electron/electron/audio/whisper/
-        const workerPath = path.join(__dirname, 'whisperWorker.js');
-        const w = new Worker(workerPath);
+        // __dirname at runtime = dist-electron/electron/audio/whisper/ when
+        // this module is loaded standalone, but esbuild's bundle:true inlines
+        // it into main.js where __dirname becomes dist-electron/electron/.
+        // Probe both candidate paths to stay robust across build modes.
+        const candidates = [
+            path.join(__dirname, 'whisperWorker.js'),
+            path.join(__dirname, 'audio', 'whisper', 'whisperWorker.js'),
+            path.join(__dirname, 'whisper', 'whisperWorker.js'),
+        ];
+        const workerPath = candidates.find(p => require('fs').existsSync(p));
+        if (!workerPath) {
+            console.warn(`[ModelPreloader] whisperWorker.js not found, skipping preload. Tried: ${candidates.join(', ')}`);
+            this.loading = false;
+            this.pendingModelId = null;
+            return;
+        }
+        // Same OOM fix as LocalWhisperSTT.spawnWorker: Large v3 needs >1.5 GB
+        // of V8 ArrayBuffer headroom while transformers.js streams the ONNX
+        // into ORT. Default worker old-space cap (~1.5 GB) crashes the whole
+        // Electron process silently.
+        const w = new Worker(workerPath, {
+            resourceLimits: {
+                maxOldGenerationSizeMb: 8192,
+            },
+        });
         this.loadingWorker = w;
 
         w.on('message', (msg: any) => {

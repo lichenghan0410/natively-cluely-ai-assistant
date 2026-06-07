@@ -21,6 +21,8 @@ export interface AppSettings {
     phoneMirrorEnabled?: boolean;
     phoneMirrorExposeOnLan?: boolean;
     localWhisperModel?: string;
+    sttBackend?: 'whispercpp' | 'medium';
+    whisperCppModel?: 'large-v3-turbo-q5_0' | 'medium-q5_0';
     // Per-channel model overrides for local Whisper. When
     // localWhisperPerChannelEnabled is true, the two LocalWhisperSTT instances
     // pick their own model (mic / system) instead of sharing localWhisperModel.
@@ -52,6 +54,11 @@ export interface AppSettings {
     // When true (default) and the active mode is a technical / coding interview, prefer
     // direct vision LLM over structured-extract-then-answer for lowest latency.
     technicalInterviewVisionFirst?: boolean;
+    // ADR-005 Phase 2.3 — global generative-assist (privacy) toggle. When false,
+    // the realtime answer assist never sends the transcript/notes to a cloud
+    // generator (Codex); it stays local (retrieval only). Also serves as the
+    // practice/exam guard (turn off during a scored attempt). Default: true.
+    generativeAssistEnabled?: boolean;
 }
 
 export const VALID_SCREEN_UNDERSTANDING_MODES = ['vision_first', 'vision_only', 'private_vision'] as const;
@@ -95,6 +102,13 @@ export class SettingsManager {
     public set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
         this.settings[key] = value;
         this.saveSettings();
+    }
+
+    // ADR-005 Phase 2.3 — generative assist defaults ON; only an explicit false
+    // disables it (so existing installs keep the assist). When false, the
+    // realtime assist stays local and never sends the transcript to the cloud.
+    public getGenerativeAssistEnabled(): boolean {
+        return this.settings.generativeAssistEnabled !== false;
     }
 
     // Resolved screen-understanding mode with default and runtime validation.

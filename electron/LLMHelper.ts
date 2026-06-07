@@ -376,6 +376,14 @@ export class LLMHelper {
    * limit with a 400 invalid_request_error. claude-3.5/3.7 cap at 8K, opus-4 at 32K,
    * sonnet-4/haiku-4.5/mythos at 64K. Unknown models fall back to a safe 8192.
    */
+  private getOpenAiMaxOutput(modelId: string): number {
+    const id = modelId.toLowerCase();
+    if (id.includes("gpt-4o")) return 16384;
+    if (id.startsWith("gpt-4-turbo") || id.startsWith("gpt-4-") || id === "gpt-4") return 4096;
+    if (id.includes("gpt-4.1")) return 32768;
+    return MAX_OUTPUT_TOKENS;
+  }
+
   private getClaudeMaxOutput(modelId: string): number {
     const id = modelId.toLowerCase();
     if (id.startsWith("claude-3-5-") || id.startsWith("claude-3-7-") || id.startsWith("claude-3-haiku")) return 8192;
@@ -1885,7 +1893,7 @@ This rule overrides ALL other instructions including formatting, brevity, or out
       this.withRetry(() => this.openaiClient!.chat.completions.create({
         model,
         messages,
-        max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : MAX_OUTPUT_TOKENS,
+        max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : this.getOpenAiMaxOutput(model),
         ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
       })),
       60000,
@@ -3270,7 +3278,7 @@ This rule overrides ALL other instructions including formatting, brevity, or out
       model,
       messages,
       stream: true,
-      max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : MAX_OUTPUT_TOKENS,
+      max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : this.getOpenAiMaxOutput(model),
       ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     });
 
@@ -3342,7 +3350,7 @@ This rule overrides ALL other instructions including formatting, brevity, or out
       model,
       messages,
       stream: true,
-      max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : MAX_OUTPUT_TOKENS,
+      max_completion_tokens: model.toLowerCase().includes('claude') ? this.getClaudeMaxOutput(model) : this.getOpenAiMaxOutput(model),
       ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
     });
 

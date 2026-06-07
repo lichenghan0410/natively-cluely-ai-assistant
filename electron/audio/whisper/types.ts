@@ -20,7 +20,10 @@ export type WhisperModelId =
   // reuse → ~100× lower latency than Whisper Large v3 at comparable WER.
   // English-only. MIT licensed.
   | 'onnx-community/moonshine-tiny-ONNX'
-  | 'onnx-community/moonshine-base-ONNX';
+  | 'onnx-community/moonshine-base-ONNX'
+  | 'whispercpp-runtime'
+  | 'large-v3-turbo-q5_0'
+  | 'medium-q5_0';
 
 export type WhisperModelStatus = 'available' | 'missing' | 'downloading' | 'error';
 
@@ -41,6 +44,7 @@ export interface WhisperModelInfo {
   // Moonshine: streaming-native architecture, ~100× lower perceived latency
   // than Whisper. Highest priority recommendation for English live use.
   streaming?: boolean;
+  backend?: 'onnx' | 'whispercpp';
 }
 
 export interface WorkerInitMessage {

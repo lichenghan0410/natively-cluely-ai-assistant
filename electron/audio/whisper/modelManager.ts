@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import type { WhisperModelId, WhisperModelInfo } from './types';
+import { getWhisperCppModelPath, getWhisperCppModelSpec, getWhisperCppRuntimeDir, getWhisperCppServerPath, validateWhisperCppFile } from './whisperCppAssets';
 
 // env is configured lazily via configureTransformersCache()
 // We import the type only here; the actual require() happens at runtime.
@@ -30,6 +31,12 @@ const MODEL_CATALOG: WhisperModelInfo[] = [
   { id: 'Xenova/whisper-small',      name: 'Small Multilingual', sizeMb: 466, speed: 'medium',  accuracy: 'high',     multilingual: true,  status: 'missing' },
   { id: 'Xenova/whisper-medium.en',  name: 'Medium English',  sizeMb: 1500, speed: 'slow',      accuracy: 'very-high', multilingual: false, status: 'missing', requiresAppleSilicon: true },
   { id: 'Xenova/whisper-medium',     name: 'Medium Multilingual', sizeMb: 1530, speed: 'slow',  accuracy: 'very-high', multilingual: true,  status: 'missing', requiresAppleSilicon: true },
+];
+
+const WHISPER_CPP_CATALOG: WhisperModelInfo[] = [
+  { id: 'whispercpp-runtime', name: 'whisper.cpp CUDA Runtime', sizeMb: 438, speed: 'very-fast', accuracy: 'very-high', multilingual: true, status: 'missing', backend: 'whispercpp' },
+  { id: 'large-v3-turbo-q5_0', name: 'Large v3 Turbo Q5', sizeMb: 547, speed: 'very-fast', accuracy: 'very-high', multilingual: true, status: 'missing', backend: 'whispercpp' },
+  { id: 'medium-q5_0', name: 'Medium Q5', sizeMb: 514, speed: 'fast', accuracy: 'very-high', multilingual: true, status: 'missing', backend: 'whispercpp' },
 ];
 
 /**
@@ -123,6 +130,13 @@ function expectedOnnxFiles(dtype: string | Record<string, string>) {
  * missing variant on first use, blocking start() for 30–90s.
  */
 export function isModelCached(modelId: WhisperModelId, dtype?: string | Record<string, string>): boolean {
+  if (modelId === 'whispercpp-runtime') {
+    return fs.existsSync(getWhisperCppServerPath());
+  }
+  if (modelId === 'large-v3-turbo-q5_0' || modelId === 'medium-q5_0') {
+    return validateWhisperCppFile(getWhisperCppModelPath(modelId), getWhisperCppModelSpec(modelId)).ok;
+  }
+
   const cacheDir = getModelsDir();
   const modelDir = path.join(cacheDir, modelIdToCacheDir(modelId));
   if (!fs.existsSync(modelDir)) return false;
@@ -155,16 +169,35 @@ export function getAvailableModels(): WhisperModelInfo[] {
   } catch {
     dtype = undefined; // fall back to legacy directory-non-empty check
   }
-  return MODEL_CATALOG.map(m => ({
+  const onnxModels: WhisperModelInfo[] = MODEL_CATALOG.map(m => ({
     ...m,
-    status: isModelCached(m.id, dtype) ? 'available' : 'missing',
+    backend: 'onnx' as const,
+    status: isModelCached(m.id, dtype) ? 'available' as const : 'missing' as const,
   }));
+  const whisperCppModels: WhisperModelInfo[] = WHISPER_CPP_CATALOG.map(m => ({
+    ...m,
+    status: isModelCached(m.id) ? 'available' as const : 'missing' as const,
+  }));
+  return [...whisperCppModels, ...onnxModels];
 }
 
 /**
  * Deletes a downloaded model from the cache directory.
  */
 export function deleteModel(modelId: WhisperModelId): void {
+  if (modelId === 'whispercpp-runtime') {
+    const runtimeDir = getWhisperCppRuntimeDir();
+    if (fs.existsSync(runtimeDir)) fs.rmSync(runtimeDir, { recursive: true, force: true });
+    console.log('[modelManager] Deleted whisper.cpp runtime');
+    return;
+  }
+  if (modelId === 'large-v3-turbo-q5_0' || modelId === 'medium-q5_0') {
+    const modelPath = getWhisperCppModelPath(modelId);
+    if (fs.existsSync(modelPath)) fs.rmSync(modelPath, { force: true });
+    console.log(`[modelManager] Deleted whisper.cpp model: ${modelId}`);
+    return;
+  }
+
   const cacheDir = getModelsDir();
   const modelDir = path.join(cacheDir, modelIdToCacheDir(modelId));
   if (fs.existsSync(modelDir)) {

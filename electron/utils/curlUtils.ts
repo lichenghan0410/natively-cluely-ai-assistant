@@ -273,7 +273,7 @@ export function validateImagePath(imagePath: string, userDataPath: string): { is
 
     // Block Windows drive paths
     if (/^[A-Za-z]:\\/.test(imagePath)) {
-        return { isValid: false, reason: 'Windows absolute paths are not allowed' };
+        { const __np = imagePath.replace(/\\/g, '/').toLowerCase(); const __nu = userDataPath.replace(/\\/g, '/').toLowerCase(); if (!__np.startsWith(__nu)) return { isValid: false, reason: 'Windows absolute paths are not allowed' }; }
     }
 
     // Normalize userDataPath for comparison

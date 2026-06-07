@@ -147,6 +147,8 @@ export const AIProvidersSettings: React.FC = () => {
     // --- Default Model ---
     const [defaultModel, setDefaultModel] = useState<string>('gemini-3.1-flash-lite-preview');
     const [fastResponseMode, setFastResponseMode] = useState(false);
+    // ADR-005 Phase 2.3 — generative-assist (privacy) toggle. Default ON.
+    const [generativeAssistEnabled, setGenerativeAssistEnabled] = useState(true);
     const [credentialsLoaded, setCredentialsLoaded] = useState(false);
     const canUseFastMode = !!(hasStoredKey.groq || hasStoredKey.natively || codexCliConfig.enabled);
 
@@ -189,6 +191,9 @@ export const AIProvidersSettings: React.FC = () => {
                 const fastMode = await window.electronAPI?.getGroqFastTextMode();
                 if (fastMode) setFastResponseMode(fastMode.enabled);
 
+                const genAssist = await window.electronAPI?.getGenerativeAssistEnabled?.();
+                if (genAssist) setGenerativeAssistEnabled(genAssist.enabled);
+
                 // Mark credentials as fully loaded so the enforcement effect can fire
                 setCredentialsLoaded(true);
 
@@ -224,6 +229,15 @@ export const AIProvidersSettings: React.FC = () => {
             });
             return () => unsubscribe();
         }
+    }, []);
+
+    // ADR-005 Phase 2.3 — keep the generative-assist toggle in sync across windows.
+    useEffect(() => {
+        if (!window.electronAPI?.onGenerativeAssistChanged) return;
+        const unsubscribe = window.electronAPI.onGenerativeAssistChanged((enabled: boolean) => {
+            setGenerativeAssistEnabled(enabled);
+        });
+        return () => unsubscribe();
     }, []);
 
     // Effect to enforce fast mode disabled if neither Groq key nor Natively API is configured.
@@ -585,6 +599,27 @@ export const AIProvidersSettings: React.FC = () => {
                         className={`shrink-0 w-11 h-6 rounded-full relative cursor-pointer transition-colors ${!canUseFastMode ? 'cursor-not-allowed bg-bg-toggle-switch' : fastResponseMode ? 'bg-orange-500' : 'bg-bg-toggle-switch border border-border-muted'}`}
                     >
                         <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${fastResponseMode ? 'translate-x-5' : 'translate-x-0'}`} />
+                    </div>
+                </div>
+
+                {/* ADR-005 Phase 2.3 — Generative Assist (Privacy) toggle */}
+                <div className="bg-bg-item-surface rounded-xl p-5 border border-border-subtle flex items-center justify-between gap-4">
+                    <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                            <label className="block text-xs font-medium text-text-primary uppercase tracking-wide mb-0">Generative Assist</label>
+                            <span className="bg-blue-500/10 text-blue-500 text-[9px] font-bold px-1.5 py-0.5 rounded border border-blue-500/20">PRIVACY</span>
+                        </div>
+                        <p className="text-[10px] text-text-secondary mt-0.5">When on, the realtime coach may send your transcript to the cloud model to generate suggestions. Turn it off to stay fully local — reference material still shows, but nothing leaves your machine. Also turn it off during a real scored test.</p>
+                    </div>
+                    <div
+                        onClick={async () => {
+                            const newState = !generativeAssistEnabled;
+                            setGenerativeAssistEnabled(newState);
+                            await window.electronAPI?.setGenerativeAssistEnabled?.(newState);
+                        }}
+                        className={`shrink-0 w-11 h-6 rounded-full relative cursor-pointer transition-colors ${generativeAssistEnabled ? 'bg-blue-500' : 'bg-bg-toggle-switch border border-border-muted'}`}
+                    >
+                        <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${generativeAssistEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
                     </div>
                 </div>
             </div>

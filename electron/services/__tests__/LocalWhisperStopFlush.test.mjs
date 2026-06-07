@@ -13,7 +13,7 @@ const stopSource = source.slice(stopStart, stopEnd);
 const flushPendingStart = source.indexOf('    private flushPending(): void');
 const flushPendingEnd = source.indexOf('    private beginWorkerTermination', flushPendingStart);
 const flushPendingSource = source.slice(flushPendingStart, flushPendingEnd);
-const listenerStart = source.indexOf('    private attachWorkerListeners(): void');
+const listenerStart = source.indexOf('    private attachBackendListeners');
 const listenerEnd = source.indexOf('    private flushPending(): void', listenerStart);
 const listenerSource = source.slice(listenerStart, listenerEnd);
 
@@ -30,5 +30,5 @@ test('LocalWhisperSTT drains queued stop-time finals before terminating worker',
   assert.match(flushPendingSource, /queued\.forEach\(audio => this\.sendTranscribe\(audio, false\)\);/);
   assert.match(listenerSource, /!this\.isActive && !\(this\.isDrainingFinals && msg\.type === 'result'\)/);
   assert.match(listenerSource, /this\.drainingFinalsInFlight = Math\.max\(0, this\.drainingFinalsInFlight - 1\);/);
-  assert.match(listenerSource, /this\.beginWorkerTermination\(this\.worker\);/);
+  assert.match(listenerSource, /this\.beginBackendTermination\(this\.backend\);/);
 });
