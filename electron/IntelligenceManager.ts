@@ -60,6 +60,8 @@ export class IntelligenceManager extends EventEmitter {
             'negotiation_coaching',
             // Phase 3: Cluely-style dynamic action card emissions.
             'dynamic_action_emitted',
+            // ADR-005 Phase 2.4: instant local Japrise reference (two-tier UX).
+            'japrise_instant_reference',
         ];
 
         for (const event of events) {

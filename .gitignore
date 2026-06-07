@@ -252,3 +252,7 @@ refactor_profile.py
 refactor.js
 skills-lock.json
 windowswork.md
+# Japrise v1 — exclude local backups & large model binaries
+*.bak
+resources/models/Xenova/multilingual-e5-small/
+*.bak*

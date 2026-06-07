@@ -28,6 +28,8 @@ export function initializeIpcHandlers(appState: AppState): void {
    * Used to gate profile intelligence features (resume upload, JD upload, company research, etc.).
    */
   const isProOrTrialActive = (): boolean => {
+    // ACCEPTANCE/DEV: unlock pro-gated features during dev runs.
+    if (process.env.NODE_ENV === 'development') return true;
     // 1. Full premium license (Dodo / Gumroad / Natively API subscription)
     try {
       const { LicenseManager } = require('../premium/electron/services/LicenseManager');
@@ -2332,6 +2334,33 @@ export function initializeIpcHandlers(appState: AppState): void {
       // Broadcast to all windows
       BrowserWindow.getAllWindows().forEach(win => {
         win.webContents.send('groq-fast-text-changed', enabled);
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get generative-assist (privacy) toggle — ADR-005 Phase 2.3
+  safeHandle("get-generative-assist-enabled", () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      return { enabled: SettingsManager.getInstance().getGenerativeAssistEnabled() };
+    } catch (error: any) {
+      return { enabled: true };
+    }
+  });
+
+  // Set generative-assist (privacy) toggle. When off, the realtime assist stays
+  // local and never sends the transcript/notes to the cloud generator (Codex).
+  safeHandle("set-generative-assist-enabled", (_, enabled: boolean) => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      SettingsManager.getInstance().set('generativeAssistEnabled', enabled);
+
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('generative-assist-changed', enabled);
       });
 
       return { success: true };

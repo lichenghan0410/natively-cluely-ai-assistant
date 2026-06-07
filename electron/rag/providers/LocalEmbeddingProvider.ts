@@ -4,8 +4,14 @@ import { app } from 'electron';
 import { IEmbeddingProvider } from './IEmbeddingProvider';
 
 export class LocalEmbeddingProvider implements IEmbeddingProvider {
-  readonly name = 'local';
-  readonly dimensions = 384; // all-MiniLM-L6-v2
+  // Name bumped from 'local' so the existing provider-switch detection
+  // (EmbeddingPipeline / getIncompatibleMeetingsCount) treats old all-MiniLM
+  // 'local' embeddings as incompatible and triggers a re-index — otherwise the
+  // same 384-dim + same 'local' name would let all-MiniLM vectors silently mix
+  // with e5 vectors in search. The Modes/assist path re-embeds in memory per
+  // query, so it is unaffected either way.
+  readonly name = 'local-e5-small';
+  readonly dimensions = 384; // multilingual-e5-small — same dim as the prior all-MiniLM ⇒ zero vec-table migration
 
   private pipe: any = null;
   private loadingPromise: Promise<void> | null = null; // prevents concurrent init races
@@ -54,8 +60,12 @@ export class LocalEmbeddingProvider implements IEmbeddingProvider {
       env.allowRemoteModels = false;
       env.localModelPath = this.modelPath;
 
-      this.pipe = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+      this.pipe = await pipeline('feature-extraction', 'Xenova/multilingual-e5-small', {
         local_files_only: true,
+        // int8 quantized weights (onnx/model_quantized.onnx, ~112MB vs 448MB fp32).
+        // JA retrieval spike: P@3 unchanged (1.0), P@1 0.79→0.71, ~4x faster — and
+        // still far above the old all-MiniLM. Revert to 'fp32' if P@1 ever matters.
+        dtype: 'q8',
       });
     })();
 
@@ -70,18 +80,23 @@ export class LocalEmbeddingProvider implements IEmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     await this.ensureLoaded();
-    const output = await this.pipe(text, { pooling: 'mean', normalize: true });
+    // e5 is asymmetric: documents/passages take the "passage:" prefix.
+    const output = await this.pipe(`passage: ${text}`, { pooling: 'mean', normalize: true });
     return Array.from(output.data as Float32Array);
   }
 
   async embedQuery(text: string): Promise<number[]> {
-    return this.embed(text); // all-MiniLM-L6-v2 is symmetric
+    await this.ensureLoaded();
+    // e5 is asymmetric: search queries take the "query:" prefix (NOT symmetric
+    // with embed(), unlike the previous all-MiniLM model).
+    const output = await this.pipe(`query: ${text}`, { pooling: 'mean', normalize: true });
+    return Array.from(output.data as Float32Array);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     await this.ensureLoaded();
-    // transformers.js handles batching internally
-    const output = await this.pipe(texts, { pooling: 'mean', normalize: true });
+    // transformers.js handles batching internally; each passage gets the e5 prefix.
+    const output = await this.pipe(texts.map(t => `passage: ${t}`), { pooling: 'mean', normalize: true });
     // output.data is flat [n * 384], reshape it
     const batchSize = texts.length;
     const result: number[][] = [];

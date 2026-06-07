@@ -2983,6 +2983,15 @@ export class AppState {
       queueBatch('suggested_answer', { token, question, confidence });
     })
 
+    // ADR-005 Phase 2.4 — instant retrieval tier. Forward the local Japrise
+    // reference card straight to the renderer's instant panel. No batching: it
+    // fires only on part-transition final segments (low volume), and it's local
+    // data the user should see immediately, ahead of the async coaching stream.
+    this.intelligenceManager.on('japrise_instant_reference', (payload: unknown) => {
+      const win = mainWindow();
+      if (win) win.webContents.send('intelligence-japrise-instant-reference', payload);
+    })
+
     // Sprint 7: dedicated negotiation-coaching channel. Engine emits this
     // INSTEAD of suggested_answer / suggested_answer_token when it detects
     // the coaching sentinel, so the renderer no longer needs JSON.parse-

@@ -179,7 +179,21 @@ export class IntelligenceEngine extends EventEmitter {
     // ============================================
 
     private static wordsOf(text: string): Set<string> {
-        return new Set(text.toLowerCase().match(/\b\w+\b/g) ?? []);
+        const normalized = text.normalize('NFKC').toLowerCase();
+        const tokens: string[] = normalized.match(/\b\w+\b/g) ?? [];
+        // Japanese has no word boundaries, so `\b\w+\b` drops it entirely — two
+        // Japanese segments would both tokenize to empty sets and read as
+        // identical (jaccardSimilarity returns 1 for two empty sets), breaking
+        // interim/final dedup. Add CJK character bigrams so Japanese transcripts
+        // get real overlap signal. Latin tokens are unchanged.
+        const runs = normalized.match(/[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]+/g);
+        if (runs) {
+            for (const run of runs) {
+                if (run.length === 1) tokens.push(run);
+                else for (let i = 0; i < run.length - 1; i++) tokens.push(run.slice(i, i + 2));
+            }
+        }
+        return new Set(tokens);
     }
 
     // Returns a score in [0,1] that accounts for partial-to-final comparisons.
@@ -212,10 +226,11 @@ export class IntelligenceEngine extends EventEmitter {
         const text = segment.text;
         const confidence = segment.confidence ?? 0;
         const words = text.trim().split(/\s+/).filter(Boolean);
+        const __cjk = /[぀-ヿ一-鿿]/.test(text);
         if (
             confidence < this.SPECULATIVE_MIN_CONFIDENCE ||
-            words.length < this.SPECULATIVE_MIN_WORDS ||
-            !IntelligenceEngine.hasQuestionSignal(text)
+            (__cjk ? text.trim().length < 10 : words.length < this.SPECULATIVE_MIN_WORDS) ||
+            (!__cjk && !IntelligenceEngine.hasQuestionSignal(text))
         ) return;
 
         if (this.speculativeTimer !== null) {
@@ -263,6 +278,19 @@ export class IntelligenceEngine extends EventEmitter {
                 // Intentionally swallow — dynamic actions are auxiliary and
                 // must never break the answer pipeline.
                 console.warn('[IntelligenceEngine] detectAndEmitDynamicActions failed', (err as Error)?.message);
+            }
+            // ADR-005 Phase 2.4 — instant retrieval tier. When a final segment
+            // carries a Japrise part signal, emit that part's fully-local reference
+            // card (no LLM, no cloud) so the renderer can show it immediately while
+            // the async coaching (Codex) is still streaming. Emitted only on a
+            // detected part, so answer segments keep the previous panel (no flicker).
+            // Auxiliary — must never break the transcript path.
+            try {
+                const { ModesManager } = require('./services/ModesManager');
+                const ref = ModesManager.getInstance().getJapriseInstantReference(segment.text);
+                if (ref) this.emit('japrise_instant_reference', ref);
+            } catch (err) {
+                console.warn('[IntelligenceEngine] japrise instant reference failed', (err as Error)?.message);
             }
         }
 

@@ -21,6 +21,7 @@ const EXPECTED_MODE_TYPES = [
   'looking-for-work',
   'technical-interview',
   'lecture',
+  'japrise',
 ];
 
 const BASE_TIME = '2026-05-14T00:00:00.000Z';
@@ -122,9 +123,9 @@ beforeEach(() => {
   installDb(makeDb());
 });
 
-test('MODE_TEMPLATES enumerates exactly the seven production modes in UI order', () => {
+test('MODE_TEMPLATES enumerates exactly the eight production modes in UI order', () => {
   assert.deepEqual(MODE_TEMPLATES.map(mode => mode.type), EXPECTED_MODE_TYPES);
-  assert.equal(new Set(MODE_TEMPLATES.map(mode => mode.type)).size, 7);
+  assert.equal(new Set(MODE_TEMPLATES.map(mode => mode.type)).size, 8);
   for (const mode of MODE_TEMPLATES) {
     assert.equal(typeof mode.label, 'string');
     assert.ok(mode.label.length > 0);
@@ -153,6 +154,7 @@ test('all mode prompts start with a shared prefix so duplicate-token stripping w
     'looking-for-work': promptsMod.MODE_LOOKING_FOR_WORK_PROMPT,
     'technical-interview': promptsMod.MODE_TECHNICAL_INTERVIEW_PROMPT,
     lecture: promptsMod.MODE_LECTURE_PROMPT,
+    japrise: promptsMod.MODE_JAPRISE_PROMPT,
   };
 
   for (const [modeType, prompt] of Object.entries(promptByMode)) {

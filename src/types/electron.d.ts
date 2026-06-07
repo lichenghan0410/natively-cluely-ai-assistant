@@ -298,6 +298,9 @@ export interface ElectronAPI {
   // Groq Fast Text Mode
   getGroqFastTextMode: () => Promise<{ enabled: boolean }>;
   setGroqFastTextMode: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+  // ADR-005 Phase 2.3 — generative-assist (privacy) toggle
+  getGenerativeAssistEnabled: () => Promise<{ enabled: boolean }>;
+  setGenerativeAssistEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
   getCodexCliConfig: () => Promise<{ enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number }>;
   setCodexCliConfig: (config: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number }) => Promise<{ success: boolean; error?: string; config?: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number } }>;
   testCodexCli: (config?: { enabled?: boolean; path?: string; model?: string; fastModel?: string; timeoutMs?: number }) => Promise<{ success: boolean; error?: string; resolvedPath?: string; config?: { enabled: boolean; path: string; model: string; fastModel: string; timeoutMs: number } }>;
@@ -326,6 +329,9 @@ export interface ElectronAPI {
 
   onUndetectableChanged: (callback: (state: boolean) => void) => () => void;
   onGroqFastTextChanged: (callback: (enabled: boolean) => void) => () => void;
+  // ADR-005 Phase 2.3/2.4 — generative-assist toggle sync + instant Japrise reference feed
+  onGenerativeAssistChanged: (callback: (enabled: boolean) => void) => () => void;
+  onJapriseInstantReference: (callback: (payload: { part: number; partName: string; directive: string; reference: string }) => void) => () => void;
   onModelChanged: (callback: (modelId: string) => void) => () => void;
 
   onOllamaPullProgress: (callback: (data: { status: string; percent: number }) => void) => () => void;

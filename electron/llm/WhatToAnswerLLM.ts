@@ -34,6 +34,18 @@ export class WhatToAnswerLLM {
         this.modesManager = modesManager;
     }
 
+    // ADR-005 Phase 2.3 — global generative-assist (privacy) toggle read. A method
+    // (not an inline SettingsManager read) so it stays overridable in tests and so
+    // early-boot/test contexts where SettingsManager isn't ready default to enabled.
+    private isGenerativeAssistEnabled(): boolean {
+        try {
+            const { SettingsManager } = require('../services/SettingsManager');
+            return SettingsManager.getInstance().getGenerativeAssistEnabled();
+        } catch {
+            return true; // settings unavailable → treat as enabled
+        }
+    }
+
     // Deprecated non-streaming method (redirect to streaming or implement if needed)
     async generate(cleanedTranscript: string): Promise<string> {
         const stream = this.generateStream(cleanedTranscript);
@@ -57,6 +69,15 @@ export class WhatToAnswerLLM {
 
         try {
             if (MEASURE) tStart = performance.now();
+
+            // ADR-005 Phase 2.3 — global generative-assist (privacy) gate. When the
+            // user turns generative assist off, never send the transcript to the
+            // cloud generator: stay local, emit a short notice, and return. Doubles
+            // as the practice/exam guard.
+            if (!this.isGenerativeAssistEnabled()) {
+                yield '生成補助はオフです（ローカルのみ）。設定でオンにできます。';
+                return;
+            }
 
             // ── Step 1: Transient context (intent + prior-turn guard) ──────────
             if (MEASURE) tIntent = performance.now();
@@ -246,7 +267,13 @@ ANSWER SHAPE: ${intentResult.answerShape}
 
         } catch (error) {
             console.error("[WhatToAnswerLLM] Stream failed:", error);
-            yield "Could you repeat that? I want to make sure I address your question properly.";
+            // ADR-005 Phase 2.4 — network-level offline degrade. When the cloud
+            // generator can't be reached (offline / all providers failed), the
+            // coaching tier degrades gracefully with a clear, accurate notice
+            // instead of the misleading "didn't catch the question" line. The
+            // instant retrieval tier (local reference card) is emitted independently
+            // on the transcript path, so local help remains available offline.
+            yield "I couldn't reach the assistant just now — you may be offline. Your local reference is still available.";
         }
     }
 }

@@ -59,6 +59,7 @@ import type { MeetingInterfaceTheme } from '../lib/meetingInterfaceTheme';
 import GlassEffectLayer from './ui/GlassEffectLayer';
 import { getCodexCliModelDisplayName } from '../utils/modelUtils';
 import { DynamicActionBar } from './dynamic-actions/DynamicActionBar';
+import JapriseInstantPanel from './JapriseInstantPanel';
 import type { DynamicActionPayload } from '../types/electron';
 
 interface Message {
@@ -3230,6 +3231,11 @@ Provide only the answer, nothing else.`;
                                     void handleWhatToSay(action.promptInstruction);
                                 }}
                             />
+
+                            {/* ADR-005 Phase 2.4 — instant local Japrise reference card.
+                                Self-hides until a part is detected; appears in the primary
+                                scan path like the dynamic-action bar above. */}
+                            <JapriseInstantPanel />
 
                             {/* Rolling Transcript Bar — includes STT status indicator inline */}
                             {(showTranscript && rollingTranscript) || interviewerSttIndicatorStatus !== 'connected' || sttUserStatus !== 'connected' ? (
